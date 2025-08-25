@@ -7,7 +7,6 @@ local totalLaps = 1
 local raceResults = {}
 local currentRaceFinishers = {}
 
-
 RegisterServerEvent('horse_race:setLaps')
 AddEventHandler('horse_race:setLaps', function(laps)
     local src = source
@@ -22,7 +21,6 @@ AddEventHandler('horse_race:setLaps', function(laps)
         type = 'inform'
     })
 end)
-
 
 RegisterServerEvent('horse_race:joinRace')
 AddEventHandler('horse_race:joinRace', function()
@@ -52,7 +50,6 @@ AddEventHandler('horse_race:joinRace', function()
     TriggerClientEvent('ox_lib:notify', src, {title = 'Horse Race', description = 'You joined the race!', type = 'success'})
 end)
 
-
 RegisterServerEvent('horse_race:trackCreated')
 AddEventHandler('horse_race:trackCreated', function(points)
     local src = source
@@ -61,7 +58,6 @@ AddEventHandler('horse_race:trackCreated', function(points)
     TriggerClientEvent('horse_race:syncTrack', -1, points, true)
     TriggerClientEvent('ox_lib:notify', -1, {title = 'Horse Race', description = 'Track created! Players can join.', type = 'success'})
 end)
-
 
 RegisterServerEvent('horse_race:leaveRace')
 AddEventHandler('horse_race:leaveRace', function()
@@ -72,7 +68,6 @@ AddEventHandler('horse_race:leaveRace', function()
         TriggerClientEvent('horse_race:updatePlayers', -1, playersInRace, raceStarted)
     end
 end)
-
 
 RegisterServerEvent('horse_race:startRace')
 AddEventHandler('horse_race:startRace', function()
@@ -96,7 +91,7 @@ AddEventHandler('horse_race:startRace', function()
     end
     
     if raceStarted then
-        TriggerClientEvent('ox_lib:notify', src, {title = 'Horse Race', description = 'Race already in progress!', type = 'error'})
+        TriggerClientEvent('ox_lib:notify', src, {title = 'Horse Race', description = 'Race in progress!', type = 'error'})
         return
     end
     
@@ -110,16 +105,31 @@ AddEventHandler('horse_race:startRace', function()
     })
 end)
 
-
 RegisterServerEvent('horse_race:finishRace')
 AddEventHandler('horse_race:finishRace', function(playerLaps)
     local src = source
     local Player = RSGCore.Functions.GetPlayer(src)
-    if not playersInRace[src] or playerLaps < totalLaps then return end
+    print("horse_race:finishRace triggered for src:", src, "playerLaps:", playerLaps, "totalLaps:", totalLaps, "in playersInRace:", playersInRace[src] ~= nil)
+    
+    if not Player then
+        print("Error: Player data not found for src:", src)
+        return
+    end
+    if not playersInRace[src] then
+        print("Error: Player not in race, src:", src)
+        TriggerClientEvent('ox_lib:notify', src, {title = 'Horse Race', description = 'You are not in the race!', type = 'error'})
+        return
+    end
+    if playerLaps < totalLaps then
+        print("Error: Player laps", playerLaps, "less than totalLaps", totalLaps, "for src:", src)
+        TriggerClientEvent('ox_lib:notify', src, {title = 'Horse Race', description = 'Incomplete laps!', type = 'error'})
+        return
+    end
     
     local playerName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
     local position = #currentRaceFinishers + 1
     table.insert(currentRaceFinishers, {name = playerName, position = position, laps = totalLaps})
+    print("Added to currentRaceFinishers:", json.encode(currentRaceFinishers))
     
     TriggerClientEvent('horse_race:showFinisherNotification', -1, playerName, position)
     
@@ -133,10 +143,13 @@ AddEventHandler('horse_race:finishRace', function(playerLaps)
     
     local playerCount = 0
     for _ in pairs(playersInRace) do playerCount = playerCount + 1 end
+    print("playerCount after finish:", playerCount, "playersInRace:", json.encode(playersInRace))
     if playerCount == 0 then
         table.insert(raceResults, {finishers = currentRaceFinishers, raceId = #raceResults + 1})
+        print("Added to raceResults:", json.encode(raceResults))
         if #raceResults > 5 then table.remove(raceResults, 1) end
         
+        TriggerClientEvent('horse_race:syncRaceResults', -1, raceResults) -- Sync raceResults to clients
         TriggerClientEvent('horse_race:finishRace', -1)
         raceStarted = false
         racePoints = {}
@@ -154,12 +167,10 @@ AddEventHandler('horse_race:finishRace', function(playerLaps)
     end
 end)
 
-
 RegisterServerEvent('horse_race:countdownFinished')
 AddEventHandler('horse_race:countdownFinished', function()
     TriggerClientEvent('horse_race:raceStarted', -1)
 end)
-
 
 RegisterServerEvent('horse_race:resetRace')
 AddEventHandler('horse_race:resetRace', function()
@@ -173,6 +184,7 @@ AddEventHandler('horse_race:resetRace', function()
     totalLaps = 1
     raceResults = {}
     currentRaceFinishers = {}
+    TriggerClientEvent('horse_race:syncRaceResults', -1, raceResults) -- Sync raceResults on reset
     TriggerClientEvent('horse_race:resetRace', -1, true)
     TriggerClientEvent('ox_lib:notify', -1, {title = 'Horse Race', description = 'Race reset!', type = 'inform'})
 end)
