@@ -60,14 +60,10 @@ end
 
 local function SetRaceGPS()
     if not racePoints[1] or not racePoints[2] then return end
-
-   
     if isGpsActive then
         ClearGpsMultiRoute()
         isGpsActive = false
     end
-
-    
     StartGpsMultiRoute(0x3D9A8F9E, true, true) 
     AddPointToGpsMultiRoute(racePoints[1].x, racePoints[1].y, racePoints[1].z) 
     AddPointToGpsMultiRoute(racePoints[2].x, racePoints[2].y, racePoints[2].z) 
@@ -82,12 +78,10 @@ Citizen.CreateThread(function()
             local playerPed = PlayerPedId()
             local coords = GetEntityCoords(playerPed)
             local startPoint = racePoints[1]
-            
             if not particleHandles[1] then
                 local handle = ApplyParticleEffect(startPoint)
                 if handle then table.insert(particleHandles, handle) end
             end
-            
             if Vdist(coords.x, coords.y, coords.z, startPoint.x, startPoint.y, startPoint.z) < 10.0 then
                 PromptSetEnabled(racePrompt, true)
                 PromptSetVisible(racePrompt, true)
@@ -109,24 +103,26 @@ Citizen.CreateThread(function()
 end)
 
 function OpenRaceMenu()
+    print("currentRaceFinishers:", json.encode(currentRaceFinishers), "Length:", #currentRaceFinishers)
+    print("raceResults:", json.encode(raceResults), "Length:", #raceResults)
     lib.registerContext({
         id = 'horse_race_menu',
-        title = '🏇 Race Menu',
+        title = 'ðŸ‡ Race Menu',
         options = {
             {
-                title = '🏁 Create Track',
-                description = 'Set points ??',
+                title = 'ðŸ Create Track',
+                description = 'Set points for the race track',
                 onSelect = CreateRaceTrack,
                 disabled = trackCreated or raceStarted
             },
             {
-                title = '🐴 Join Race',
-                description = 'Join the horse race ?????',
+                title = 'ðŸ´ Join Race',
+                description = 'Join the horse race',
                 onSelect = function() TriggerServerEvent('horse_race:joinRace') end,
                 disabled = inRace or raceStarted or not trackCreated
             },
             {
-                title = '� Set Laps',
+                title = 'ðŸ Set Laps',
                 description = 'Set laps (1-5)',
                 onSelect = function()
                     local input = lib.inputDialog('Set Laps', {{type = 'number', label = 'Laps', required = true, min = 1, max = 5}})
@@ -135,20 +131,20 @@ function OpenRaceMenu()
                 disabled = raceStarted or not trackCreated
             },
             {
-                title = '🚪 Leave Race',
-                description = 'Leave the race if joined ??',
+                title = 'ðŸšª Leave Race',
+                description = 'Leave the race if joined',
                 onSelect = function() TriggerServerEvent('horse_race:leaveRace') end,
                 disabled = not inRace or raceStarted
             },
             {
-                title = '▶️ Start Race',
-                description = 'Start the race (Host only) ??',
+                title = 'â–¶ï¸ Start Race',
+                description = 'Start the race (Host only)',
                 onSelect = function() TriggerServerEvent('horse_race:startRace') end,
                 disabled = raceStarted or not trackCreated or next(playersInRace) == nil
             },
             {
-                title = '👥 View Participants',
-                description = 'See who is in the race ??',
+                title = 'ðŸ‘¥ View Participants',
+                description = 'See who is in the race',
                 onSelect = function()
                     local participantList = {}
                     for _, name in pairs(playersInRace) do
@@ -160,8 +156,24 @@ function OpenRaceMenu()
                 disabled = not trackCreated
             },
             {
-                title = '🔄 Reset Track',
-                description = 'Reset the current race track and all race data ???',
+                title = 'ðŸ“Š View Last Race Results',
+                description = 'View results of the last race',
+                onSelect = function()
+                    local resultList = {}
+                    local lastRace = raceResults[#raceResults]
+                    if lastRace and lastRace.finishers then
+                        for pos, finisher in ipairs(lastRace.finishers) do
+                            table.insert(resultList, pos .. '. ' .. finisher.name .. ' (' .. finisher.laps .. ' laps)')
+                        end
+                    end
+                    local results = 'Last Race Results: ' .. (#resultList > 0 and table.concat(resultList, ', ') or 'No results available')
+                    lib.notify({title = 'Horse Race', description = results, type = 'inform'})
+                end,
+                disabled = #raceResults == 0
+            },
+            {
+                title = 'ðŸ”„ Reset Track',
+                description = 'Reset the current race track and all race data',
                 onSelect = function() TriggerServerEvent('horse_race:resetRace') end,
                 disabled = raceStarted
             }
@@ -211,6 +223,12 @@ AddEventHandler('horse_race:syncTrack', function(points, created)
     end
 end)
 
+RegisterNetEvent('horse_race:syncRaceResults')
+AddEventHandler('horse_race:syncRaceResults', function(results)
+    raceResults = results
+    print("Received raceResults:", json.encode(raceResults))
+end)
+
 local function StartRaceCountdown()
     local count = 10
     Citizen.CreateThread(function()
@@ -232,11 +250,9 @@ Citizen.CreateThread(function()
             local startPoint = racePoints[1]
             local endPoint = racePoints[2]
             if not particleHandles[2] then table.insert(particleHandles, ApplyParticleEffect(endPoint)) end
-            
             if not isGpsActive then
                 SetRaceGPS()
             end
-
             if Vdist(coords.x, coords.y, coords.z, startPoint.x, startPoint.y, startPoint.z) < 5.0 then
                 playerLaps = playerLaps == 0 and 1 or playerLaps
             elseif Vdist(coords.x, coords.y, coords.z, endPoint.x, endPoint.y, endPoint.z) < 5.0 and playerLaps > 0 then
@@ -318,7 +334,10 @@ AddEventHandler('horse_race:showFinisherNotification', function(name, pos)
 end)
 
 RegisterNetEvent('horse_race:syncResults')
-AddEventHandler('horse_race:syncResults', function(finishers) currentRaceFinishers = finishers end)
+AddEventHandler('horse_race:syncResults', function(finishers)
+    currentRaceFinishers = finishers
+    print("Received currentRaceFinishers:", json.encode(currentRaceFinishers))
+end)
 
 RegisterNetEvent('horse_race:resetRace')
 AddEventHandler('horse_race:resetRace', function(manual)
