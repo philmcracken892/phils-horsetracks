@@ -10,10 +10,11 @@ local totalLaps = 1
 local particleHandles = {}
 local raceResults = {}
 local currentRaceFinishers = {}
+local savedTracks = {}
 local promptGroup = GetRandomIntInRange(0, 0xffffff)
 local racePrompt = nil
 local isGpsActive = false
-
+local isWaitingForTracks = false
 Citizen.CreateThread(function()
     local str = 'Open Race Menu'
     racePrompt = PromptRegisterBegin()
@@ -64,9 +65,9 @@ local function SetRaceGPS()
         ClearGpsMultiRoute()
         isGpsActive = false
     end
-    StartGpsMultiRoute(0x3D9A8F9E, true, true) 
-    AddPointToGpsMultiRoute(racePoints[1].x, racePoints[1].y, racePoints[1].z) 
-    AddPointToGpsMultiRoute(racePoints[2].x, racePoints[2].y, racePoints[2].z) 
+    StartGpsMultiRoute(0x3D9A8F9E, true, true)
+    AddPointToGpsMultiRoute(racePoints[1].x, racePoints[1].y, racePoints[1].z)
+    AddPointToGpsMultiRoute(racePoints[2].x, racePoints[2].y, racePoints[2].z)
     SetGpsMultiRouteRender(true)
     isGpsActive = true
 end
@@ -102,87 +103,188 @@ Citizen.CreateThread(function()
     end
 end)
 
+RegisterNetEvent('rsg-track:syncTracks')
+AddEventHandler('rsg-track:syncTracks', function(tracks)
+   
+    savedTracks = tracks or {}
+    if type(savedTracks) ~= 'table' then
+        
+        savedTracks = {}
+    end
+   
+    
+    if lib.getOpenContextMenu() == 'horse_race_menu' then
+       
+        OpenRaceMenu()
+    end
+    
+    if isWaitingForTracks and #savedTracks > 0 then
+       
+        isWaitingForTracks = false
+        OpenRaceMenu()
+    end
+end)
+
+
+function LoadTracksFromServer()
+    TriggerServerEvent('rsg-track:requestTracks')
+    
+end
+
 function OpenRaceMenu()
-    print("currentRaceFinishers:", json.encode(currentRaceFinishers), "Length:", #currentRaceFinishers)
-    print("raceResults:", json.encode(raceResults), "Length:", #raceResults)
+  
+    LoadTracksFromServer()
+    
+    if lib.getOpenContextMenu() == 'horse_race_menu' then
+        return
+    end
+    
+    local options = {
+        {
+            title = '\xF0\x9F\x8F\x81 Create Track',
+            description = 'Set points for a new race track',
+            onSelect = CreateRaceTrack,
+            disabled = trackCreated or raceStarted
+        },
+        {
+            title = '\xF0\x9F\x97\xBA Load Saved Track',
+            description = 'Select a previously saved track',
+            onSelect = function()
+                local trackOptions = {}
+                for _, track in ipairs(savedTracks) do
+                    table.insert(trackOptions, {
+                        title = track.name,
+                        description = 'Load track ID ' .. track.track_id,
+                        onSelect = function()
+                            TriggerServerEvent('rsg-track:loadTrack', track.track_id)
+                            lib.notify({title = 'Horse Race', description = 'Loading track: ' .. track.name, type = 'inform'})
+                        end
+                    })
+                end
+                if #trackOptions == 0 then
+                    table.insert(trackOptions, {title = 'No Tracks Available', description = 'No saved tracks found', disabled = true})
+                end
+                lib.registerContext({
+                    id = 'horse_race_load_track_menu',
+                    title = '\xF0\x9F\x97\xBA Saved Tracks',
+                    options = trackOptions
+                })
+                lib.showContext('horse_race_load_track_menu')
+            end,
+            disabled = raceStarted or #savedTracks == 0
+        },
+        {
+            title = '\xF0\x9F\x97\x91\xEF\xB8\x8F Delete Saved Track',
+            description = 'Delete a previously saved track',
+            onSelect = function()
+                local trackOptions = {}
+                for _, track in ipairs(savedTracks) do
+                    table.insert(trackOptions, {
+                        title = track.name,
+                        description = 'Delete track ID ' .. track.track_id,
+                        onSelect = function()
+                            local confirm = lib.inputDialog('Confirm Deletion', {
+                                {type = 'confirm', label = 'Delete ' .. track.name .. '?'}
+                            })
+                            if confirm then
+                                TriggerServerEvent('rsg-track:deleteTrack', track.track_id)
+                                lib.notify({title = 'Horse Race', description = 'Requested deletion of track: ' .. track.name, type = 'inform'})
+                            end
+                        end
+                    })
+                end
+                if #trackOptions == 0 then
+                    table.insert(trackOptions, {title = 'No Tracks Available', description = 'No saved tracks to delete', disabled = true})
+                end
+                lib.registerContext({
+                    id = 'horse_race_delete_track_menu',
+                    title = '\xF0\x9F\x97\x91\xEF\xB8\x8F Delete Saved Tracks',
+                    options = trackOptions
+                })
+                lib.showContext('horse_race_delete_track_menu')
+            end,
+            disabled = raceStarted or #savedTracks == 0
+        },
+        {
+            title = '\xF0\x9F\x90\xB4 Join Race',
+            description = 'Join the horse race',
+            onSelect = function() TriggerServerEvent('rsg-track:joinRace') end,
+            disabled = inRace or raceStarted or not trackCreated
+        },
+        {
+            title = '\xF0\x9F\x90\xBE Set Laps',
+            description = 'Set laps (1-5)',
+            onSelect = function()
+                local input = lib.inputDialog('Set Laps', {{type = 'number', label = 'Laps', required = true, min = 1, max = 5}})
+                if input then TriggerServerEvent('rsg-track:setLaps', input[1]) end
+            end,
+            disabled = raceStarted or not trackCreated
+        },
+        {
+            title = '\xF0\x9F\x9A\xAA Leave Race',
+            description = 'Leave the race if joined',
+            onSelect = function() TriggerServerEvent('rsg-track:leaveRace') end,
+            disabled = not inRace or raceStarted
+        },
+        {
+            title = '\xE2\x96\xB6\xEF\xB8\x8F Start Race',
+            description = 'Start the race (Host only)',
+            onSelect = function() TriggerServerEvent('rsg-track:startRace') end,
+            disabled = raceStarted or not trackCreated or next(playersInRace) == nil
+        },
+        {
+            title = '\xF0\x9F\x91\xA5 View Participants',
+            description = 'See who is in the race',
+            onSelect = function()
+                local participantList = {}
+                for _, name in pairs(playersInRace) do
+                    table.insert(participantList, name)
+                end
+                local list = 'Participants: ' .. (#participantList > 0 and table.concat(participantList, ', ') or 'None')
+                lib.notify({title = 'Horse Race', description = list, type = 'inform'})
+            end,
+            disabled = not trackCreated
+        },
+        {
+            title = '\xF0\x9F\x93\x8A View Last Race Results',
+            description = 'View results of the last race',
+            onSelect = function()
+                local resultList = {}
+                local lastRace = raceResults[#raceResults]
+                if lastRace and lastRace.finishers then
+                    for pos, finisher in ipairs(lastRace.finishers) do
+                        table.insert(resultList, pos .. '. ' .. finisher.name .. ' (' .. finisher.laps .. ' laps)')
+                    end
+                end
+                local results = 'Last Race Results: ' .. (#resultList > 0 and table.concat(resultList, ', ') or 'No results available')
+                lib.notify({title = 'Horse Race', description = results, type = 'inform'})
+            end,
+            disabled = #raceResults == 0
+        },
+        {
+            title = '\xF0\x9F\x94\x84 Reset Track',
+            description = 'Reset the current race track and all race data',
+            onSelect = function() TriggerServerEvent('rsg-track:resetRace') end,
+            disabled = raceStarted
+        }
+    }
+    
     lib.registerContext({
         id = 'horse_race_menu',
-        title = 'ðŸ‡ Race Menu',
-        options = {
-            {
-                title = 'ðŸ Create Track',
-                description = 'Set points for the race track',
-                onSelect = CreateRaceTrack,
-                disabled = trackCreated or raceStarted
-            },
-            {
-                title = 'ðŸ´ Join Race',
-                description = 'Join the horse race',
-                onSelect = function() TriggerServerEvent('horse_race:joinRace') end,
-                disabled = inRace or raceStarted or not trackCreated
-            },
-            {
-                title = 'ðŸ Set Laps',
-                description = 'Set laps (1-5)',
-                onSelect = function()
-                    local input = lib.inputDialog('Set Laps', {{type = 'number', label = 'Laps', required = true, min = 1, max = 5}})
-                    if input then TriggerServerEvent('horse_race:setLaps', input[1]) end
-                end,
-                disabled = raceStarted or not trackCreated
-            },
-            {
-                title = 'ðŸšª Leave Race',
-                description = 'Leave the race if joined',
-                onSelect = function() TriggerServerEvent('horse_race:leaveRace') end,
-                disabled = not inRace or raceStarted
-            },
-            {
-                title = 'â–¶ï¸ Start Race',
-                description = 'Start the race (Host only)',
-                onSelect = function() TriggerServerEvent('horse_race:startRace') end,
-                disabled = raceStarted or not trackCreated or next(playersInRace) == nil
-            },
-            {
-                title = 'ðŸ‘¥ View Participants',
-                description = 'See who is in the race',
-                onSelect = function()
-                    local participantList = {}
-                    for _, name in pairs(playersInRace) do
-                        table.insert(participantList, name)
-                    end
-                    local list = 'Participants: ' .. (#participantList > 0 and table.concat(participantList, ', ') or 'None')
-                    lib.notify({title = 'Horse Race', description = list, type = 'inform'})
-                end,
-                disabled = not trackCreated
-            },
-            {
-                title = 'ðŸ“Š View Last Race Results',
-                description = 'View results of the last race',
-                onSelect = function()
-                    local resultList = {}
-                    local lastRace = raceResults[#raceResults]
-                    if lastRace and lastRace.finishers then
-                        for pos, finisher in ipairs(lastRace.finishers) do
-                            table.insert(resultList, pos .. '. ' .. finisher.name .. ' (' .. finisher.laps .. ' laps)')
-                        end
-                    end
-                    local results = 'Last Race Results: ' .. (#resultList > 0 and table.concat(resultList, ', ') or 'No results available')
-                    lib.notify({title = 'Horse Race', description = results, type = 'inform'})
-                end,
-                disabled = #raceResults == 0
-            },
-            {
-                title = 'ðŸ”„ Reset Track',
-                description = 'Reset the current race track and all race data',
-                onSelect = function() TriggerServerEvent('horse_race:resetRace') end,
-                disabled = raceStarted
-            }
-        }
+        title = '\xF0\x9F\x8F\x87 Race Menu',
+        options = options
     })
     lib.showContext('horse_race_menu')
 end
 
-RegisterCommand('racerace', OpenRaceMenu, false)
+
+
+RegisterCommand('racerace', function()
+   
+    OpenRaceMenu()
+end, false)
+
+
 
 function CreateRaceTrack()
     racePoints = {}
@@ -194,21 +296,28 @@ function CreateRaceTrack()
             DrawMarker(28, coords.x, coords.y, coords.z, 0, 0, 0, 0, 0, 0, 1.5, 1.5, 1.5, 255, 0, 0, 150, false, true, 2)
             if IsControlJustPressed(0, 0xF3830D8E) then
                 table.insert(racePoints, {x = coords.x, y = coords.y, z = coords.z})
-                lib.notify({title = 'Horse Race', description = #racePoints == 1 and 'Start set! Now set end point' or 'Track created!'})
+                lib.notify({title = 'Horse Race', description = #racePoints == 1 and 'Start set! Now set end point' or 'Track points set!'})
                 if #racePoints == 2 then
-                    trackCreated = true
-                    TriggerServerEvent('horse_race:trackCreated', racePoints)
-                    CreateRaceBlip()
-                    SetRaceGPS()
-                    OpenRaceMenu()
+                    local input = lib.inputDialog('Name Your Track', {{type = 'input', label = 'Track Name', required = true, max = 50}})
+                    if input then
+                        trackCreated = true
+                        TriggerServerEvent('horse_race:trackCreated', racePoints, input[1])
+                        CreateRaceBlip()
+                        SetRaceGPS()
+                        OpenRaceMenu()
+                    else
+                        racePoints = {}
+                        lib.notify({title = 'Horse Race', description = 'Track creation cancelled', type = 'error'})
+                    end
                 end
             end
         end
     end)
 end
 
-RegisterNetEvent('horse_race:syncTrack')
-AddEventHandler('horse_race:syncTrack', function(points, created)
+RegisterNetEvent('rsg-track:syncTrack')
+AddEventHandler('rsg-track:syncTrack', function(points, created)
+   
     racePoints = points or {}
     trackCreated = created
     if created and racePoints[1] and racePoints[2] then
@@ -223,10 +332,16 @@ AddEventHandler('horse_race:syncTrack', function(points, created)
     end
 end)
 
-RegisterNetEvent('horse_race:syncRaceResults')
-AddEventHandler('horse_race:syncRaceResults', function(results)
-    raceResults = results
-    print("Received raceResults:", json.encode(raceResults))
+RegisterNetEvent('rsg-track:syncTracks')
+AddEventHandler('rsg-track:syncTracks', function(tracks)
+    savedTracks = tracks or {}
+    if type(savedTracks) ~= 'table' then
+        
+        savedTracks = {}
+    end
+    if lib.getOpenContextMenu() == 'horse_race_menu' then
+        OpenRaceMenu()
+    end
 end)
 
 local function StartRaceCountdown()
@@ -242,35 +357,92 @@ local function StartRaceCountdown()
     end)
 end
 
+
+
+
 Citizen.CreateThread(function()
+    local lastCheckpointTime = 0
+    local minCheckpointDelay = 3000 
+    local raceActive = false
+    
     while true do
-        Wait(0)
+        Wait(100) 
+        
         if raceStarted and inRace then
             local coords = GetEntityCoords(PlayerPedId())
-            local startPoint = racePoints[1]
             local endPoint = racePoints[2]
-            if not particleHandles[2] then table.insert(particleHandles, ApplyParticleEffect(endPoint)) end
+            local currentTime = GetGameTimer()
+            
+           
+            if not particleHandles[2] and endPoint then
+                local handle = ApplyParticleEffect(endPoint)
+                if handle then 
+                    table.insert(particleHandles, handle) 
+                end
+            end
+            
+           
             if not isGpsActive then
                 SetRaceGPS()
             end
-            if Vdist(coords.x, coords.y, coords.z, startPoint.x, startPoint.y, startPoint.z) < 5.0 then
-                playerLaps = playerLaps == 0 and 1 or playerLaps
-            elseif Vdist(coords.x, coords.y, coords.z, endPoint.x, endPoint.y, endPoint.z) < 5.0 and playerLaps > 0 then
-                playerLaps = playerLaps + 1
-                lib.notify({title = 'Horse Race', description = 'Lap ' .. playerLaps .. '/' .. totalLaps})
-                if playerLaps >= totalLaps then
-                    TriggerServerEvent('horse_race:finishRace', playerLaps)
-                    inRace = false
-                    playerLaps = 0
-                    if isGpsActive then
-                        ClearGpsMultiRoute()
-                        isGpsActive = false
+            
+            if endPoint then
+               
+                local distToEnd = Vdist(coords.x, coords.y, coords.z, endPoint.x, endPoint.y, endPoint.z)
+                
+             
+                local pointDistance = racePoints[1] and Vdist(racePoints[1].x, racePoints[1].y, racePoints[1].z, endPoint.x, endPoint.y, endPoint.z) or 15.0
+                local detectionRadius = math.max(4.0, math.min(8.0, pointDistance / 3))
+                
+              
+                if distToEnd < detectionRadius and (currentTime - lastCheckpointTime) > minCheckpointDelay then
+                    playerLaps = playerLaps + 1
+                    lastCheckpointTime = currentTime
+                    
+                    if playerLaps == 1 then
+                      
+                        raceActive = true
+                        lib.notify({
+                            title = 'Horse Race', 
+                            description = 'Lap 1/' .. totalLaps .. ' completed!', 
+                            type = 'success'
+                        })
+                    elseif playerLaps >= totalLaps then
+                        -- Race finished
+                        lib.notify({
+                            title = 'Horse Race', 
+                            description = 'Race Finished! Total laps: ' .. playerLaps .. '/' .. totalLaps, 
+                            type = 'success'
+                        })
+                        TriggerServerEvent('horse_race:finishRace', playerLaps)
+                        
+                      
+                        inRace = false
+                        playerLaps = 0
+                        raceActive = false
+                        
+                      
+                        if isGpsActive then
+                            ClearGpsMultiRoute()
+                            isGpsActive = false
+                        end
+                    else
+                        
+                        lib.notify({
+                            title = 'Horse Race', 
+                            description = 'Lap ' .. playerLaps .. '/' .. totalLaps .. ' completed!', 
+                            type = 'inform'
+                        })
                     end
                 end
             end
         else
+            
             ClearParticles()
             playerLaps = 0
+            raceActive = false
+            lastCheckpointTime = 0
+            
             if isGpsActive then
                 ClearGpsMultiRoute()
                 isGpsActive = false
@@ -279,39 +451,49 @@ Citizen.CreateThread(function()
     end
 end)
 
-RegisterNetEvent('horse_race:syncLaps')
-AddEventHandler('horse_race:syncLaps', function(laps) totalLaps = laps end)
 
-RegisterNetEvent('horse_race:updatePlayers')
-AddEventHandler('horse_race:updatePlayers', function(playerList, started)
+
+
+RegisterNetEvent('rsg-track:syncLaps')
+AddEventHandler('rsg-track:syncLaps', function(laps)
+   
+    totalLaps = laps
+end)
+
+RegisterNetEvent('rsg-track:updatePlayers')
+AddEventHandler('rsg-track:updatePlayers', function(playerList, started)
+   
     playersInRace = playerList
     raceStarted = started
 end)
 
-RegisterNetEvent('horse_race:joinedRace')
-AddEventHandler('horse_race:joinedRace', function()
+RegisterNetEvent('rsg-track:joinedRace')
+AddEventHandler('rsg-track:joinedRace', function()
     inRace = true
     playerLaps = 0
     lib.notify({title = 'Horse Race', description = 'You joined the race!'})
 end)
 
-RegisterNetEvent('horse_race:leftRace')
-AddEventHandler('horse_race:leftRace', function()
+RegisterNetEvent('rsg-track:leftRace')
+AddEventHandler('rsg-track:leftRace', function()
     inRace = false
     playerLaps = 0
     lib.notify({title = 'Horse Race', description = 'You left the race'})
 end)
 
-RegisterNetEvent('horse_race:startRace')
-AddEventHandler('horse_race:startRace', function()
+RegisterNetEvent('rsg-track:startRace')
+AddEventHandler('rsg-track:startRace', function()
     if inRace then StartRaceCountdown() end
 end)
 
-RegisterNetEvent('horse_race:raceStarted')
-AddEventHandler('horse_race:raceStarted', function() raceStarted = true end)
+RegisterNetEvent('rsg-track:raceStarted')
+AddEventHandler('rsg-track:raceStarted', function()
+    raceStarted = true
+    lib.notify({title = 'Horse Race', description = 'Race has started! Cross the finish line to complete laps.', type = 'success'})
+end)
 
-RegisterNetEvent('horse_race:finishRace')
-AddEventHandler('horse_race:finishRace', function()
+RegisterNetEvent('rsg-track:finishRace')
+AddEventHandler('rsg-track:finishRace', function()
     raceStarted = false
     inRace = false
     playerLaps = 0
@@ -320,27 +502,36 @@ AddEventHandler('horse_race:finishRace', function()
         ClearGpsMultiRoute()
         isGpsActive = false
     end
-    if raceBlip then RemoveBlip(raceBlip) raceBlip = nil end
+    if raceBlip then 
+        RemoveBlip(raceBlip) 
+        raceBlip = nil 
+    end
 end)
 
-RegisterNetEvent('horse_race:rewardReceived')
-AddEventHandler('horse_race:rewardReceived', function(amount)
+RegisterNetEvent('rsg-track:rewardReceived')
+AddEventHandler('rsg-track:rewardReceived', function(amount)
     lib.notify({title = 'Horse Race', description = 'You won $' .. amount .. '!'})
 end)
 
-RegisterNetEvent('horse_race:showFinisherNotification')
-AddEventHandler('horse_race:showFinisherNotification', function(name, pos)
+RegisterNetEvent('rsg-track:showFinisherNotification')
+AddEventHandler('rsg-track:showFinisherNotification', function(name, pos)
     lib.notify({title = 'Horse Race', description = name .. ' finished in position ' .. pos .. '!'})
 end)
 
-RegisterNetEvent('horse_race:syncResults')
-AddEventHandler('horse_race:syncResults', function(finishers)
+RegisterNetEvent('rsg-track:syncResults')
+AddEventHandler('rsg-track:syncResults', function(finishers)
     currentRaceFinishers = finishers
-    print("Received currentRaceFinishers:", json.encode(currentRaceFinishers))
+  
 end)
 
-RegisterNetEvent('horse_race:resetRace')
-AddEventHandler('horse_race:resetRace', function(manual)
+RegisterNetEvent('rsg-track:syncRaceResults')
+AddEventHandler('rsg-track:syncRaceResults', function(results)
+    raceResults = results
+   
+end)
+
+RegisterNetEvent('rsg-track:resetRace')
+AddEventHandler('rsg-track:resetRace', function(manual)
     racePoints = {}
     inRace = false
     raceStarted = false
@@ -348,13 +539,19 @@ AddEventHandler('horse_race:resetRace', function(manual)
     trackCreated = false
     playerLaps = 0
     totalLaps = 1
-    if manual then raceResults = {} currentRaceFinishers = {} end
+    if manual then 
+        raceResults = {} 
+        currentRaceFinishers = {} 
+    end
     ClearParticles()
     if isGpsActive then
         ClearGpsMultiRoute()
         isGpsActive = false
     end
-    if raceBlip then RemoveBlip(raceBlip) raceBlip = nil end
+    if raceBlip then 
+        RemoveBlip(raceBlip) 
+        raceBlip = nil 
+    end
 end)
 
 AddEventHandler('onResourceStop', function(resourceName)
