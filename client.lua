@@ -358,56 +358,65 @@ local function StartRaceCountdown()
 end
 
 
-
-
+-- Replace the existing race detection thread with this improved version
 Citizen.CreateThread(function()
     local lastCheckpointTime = 0
-    local minCheckpointDelay = 3000 
-    local raceActive = false
+    local minCheckpointDelay = 3000 -- 3 second delay between checkpoint detections
+    local raceActive = false -- Track if race is actually running (after countdown)
+    local hasStarted = false -- Track if player has started the race (passed start line)
     
     while true do
-        Wait(100) 
+        Wait(100) -- Balanced for performance and responsiveness
         
         if raceStarted and inRace then
             local coords = GetEntityCoords(PlayerPedId())
+            local startPoint = racePoints[1]
             local endPoint = racePoints[2]
             local currentTime = GetGameTimer()
             
-           
-            if not particleHandles[2] and endPoint then
-                local handle = ApplyParticleEffect(endPoint)
+            -- Apply particle effects at both start and finish lines if not already there
+            if not particleHandles[1] and startPoint then
+                local handle = ApplyParticleEffect(startPoint)
                 if handle then 
-                    table.insert(particleHandles, handle) 
+                    particleHandles[1] = handle
                 end
             end
             
-           
+            if not particleHandles[2] and endPoint then
+                local handle = ApplyParticleEffect(endPoint)
+                if handle then 
+                    particleHandles[2] = handle
+                end
+            end
+            
+            -- Ensure GPS is active
             if not isGpsActive then
                 SetRaceGPS()
             end
             
-            if endPoint then
-               
+            if startPoint and endPoint then
+                local detectionRadius = 6.0 -- Fixed radius for consistency
+                local distToStart = Vdist(coords.x, coords.y, coords.z, startPoint.x, startPoint.y, startPoint.z)
                 local distToEnd = Vdist(coords.x, coords.y, coords.z, endPoint.x, endPoint.y, endPoint.z)
                 
-             
-                local pointDistance = racePoints[1] and Vdist(racePoints[1].x, racePoints[1].y, racePoints[1].z, endPoint.x, endPoint.y, endPoint.z) or 15.0
-                local detectionRadius = math.max(4.0, math.min(8.0, pointDistance / 3))
+                -- Check if player has started the race (passed start line first)
+                if not hasStarted and distToStart < detectionRadius and (currentTime - lastCheckpointTime) > minCheckpointDelay then
+                    hasStarted = true
+                    raceActive = true
+                    lastCheckpointTime = currentTime
+                    lib.notify({
+                        title = 'Horse Race', 
+                        description = 'Race started! Head to the finish line.', 
+                        type = 'inform'
+                    })
+                end
                 
-              
-                if distToEnd < detectionRadius and (currentTime - lastCheckpointTime) > minCheckpointDelay then
+                -- Only count finish line crossings after the race has started
+                if hasStarted and distToEnd < detectionRadius and (currentTime - lastCheckpointTime) > minCheckpointDelay then
                     playerLaps = playerLaps + 1
                     lastCheckpointTime = currentTime
                     
-                    if playerLaps == 1 then
-                      
-                        raceActive = true
-                        lib.notify({
-                            title = 'Horse Race', 
-                            description = 'Lap 1/' .. totalLaps .. ' completed!', 
-                            type = 'success'
-                        })
-                    elseif playerLaps >= totalLaps then
+                    if playerLaps >= totalLaps then
                         -- Race finished
                         lib.notify({
                             title = 'Horse Race', 
@@ -416,31 +425,35 @@ Citizen.CreateThread(function()
                         })
                         TriggerServerEvent('horse_race:finishRace', playerLaps)
                         
-                      
+                        -- Reset player state
                         inRace = false
                         playerLaps = 0
                         raceActive = false
+                        hasStarted = false
                         
-                      
+                        -- Clear GPS
                         if isGpsActive then
                             ClearGpsMultiRoute()
                             isGpsActive = false
                         end
                     else
-                        
+                        -- Lap completed, need to go back to start for next lap
                         lib.notify({
                             title = 'Horse Race', 
-                            description = 'Lap ' .. playerLaps .. '/' .. totalLaps .. ' completed!', 
+                            description = 'Lap ' .. playerLaps .. '/' .. totalLaps .. ' completed! Return to start line.', 
                             type = 'inform'
                         })
+                        -- Reset the start detection for multi-lap races
+                        hasStarted = false
                     end
                 end
             end
         else
-            
+            -- Not in race - clear everything
             ClearParticles()
             playerLaps = 0
             raceActive = false
+            hasStarted = false
             lastCheckpointTime = 0
             
             if isGpsActive then
@@ -483,7 +496,10 @@ end)
 
 RegisterNetEvent('rsg-track:startRace')
 AddEventHandler('rsg-track:startRace', function()
-    if inRace then StartRaceCountdown() end
+    if inRace then 
+        lastCheckpointTime = 0 -- Reset explicitly when race starts
+        StartRaceCountdown() 
+    end
 end)
 
 RegisterNetEvent('rsg-track:raceStarted')
