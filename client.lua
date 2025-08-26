@@ -233,18 +233,24 @@ function OpenRaceMenu()
             disabled = raceStarted or not trackCreated or next(playersInRace) == nil
         },
         {
-            title = '\xF0\x9F\x91\xA5 View Participants',
-            description = 'See who is in the race',
-            onSelect = function()
-                local participantList = {}
-                for _, name in pairs(playersInRace) do
-                    table.insert(participantList, name)
-                end
-                local list = 'Participants: ' .. (#participantList > 0 and table.concat(participantList, ', ') or 'None')
-                lib.notify({title = 'Horse Race', description = list, type = 'inform'})
-            end,
-            disabled = not trackCreated
-        },
+			title = '\xF0\x9F\x91\xA5 View Participants',
+			description = 'See who is in the race',
+			onSelect = function()
+				local participantList = {}
+						-- Extract just the names from the player objects
+				for _, playerData in pairs(playersInRace) do
+					if type(playerData) == "table" and playerData.name then
+						table.insert(participantList, playerData.name)
+					elseif type(playerData) == "string" then
+							-- In case it's stored as just a string
+						table.insert(participantList, playerData)
+					end
+				end
+				local list = 'Participants: ' .. (#participantList > 0 and table.concat(participantList, ', ') or 'None')
+				lib.notify({title = 'Horse Race', description = list, type = 'inform'})
+			end,
+			disabled = not trackCreated
+		},
         {
             title = '\xF0\x9F\x93\x8A View Last Race Results',
             description = 'View results of the last race',
